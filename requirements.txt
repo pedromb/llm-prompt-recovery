@@ -1,0 +1,16 @@
+pyarrow
+transformers
+sentence_transformers
+accelerate
+bitsandbytes
+nvitop
+tabulate
+kaggle
+peft
+ipykernel
+pandas
+typer
+datasets
+trl
+immutabledict
+sentencepiece
