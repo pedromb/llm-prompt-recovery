@@ -6,14 +6,14 @@ from pathlib import Path
 import pickle as pkl
 import pandas as pd
 import numpy as np
-from utils import json_parser_from_chat_response
+from src.utils import json_parser_from_chat_response, DATA_PATH
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 tqdm.pandas()
 
-RANDOM_PROJECTION_PATH = "../../data/random_projection_logits_mistral_zero_shot.pkl"
-CURRENT_OUTPUT_PATH = "../../data/mistral_zero_shot_output.pkl"
-DATA_PATH = "../../data/data.csv"
+RANDOM_PROJECTION_PATH = str(DATA_PATH / "random_projection_logits_mistral_zero_shot.pkl")
+CURRENT_OUTPUT_PATH = str(DATA_PATH / "mistral_zero_shot_output.pkl")
+DATA_PATH = str(DATA_PATH / "data.csv")
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 BATCH_SIZE = 1
 
@@ -114,7 +114,6 @@ def batch_predict(
         mistral_tokenizer, 
         current_output,
         random_projection,
-        output_path = "../dataset/mistral_zero_shot_output.pkl"
     ):
     mistral_tokenizer.pad_token = mistral_tokenizer.eos_token
     for i in tqdm(range(0, len(df), BATCH_SIZE)):
@@ -136,7 +135,7 @@ def batch_predict(
                 "rewrite_prompt": results[idx]["rewrite_prompt"]
             }
             current_output[entry_id] = new_entry
-            pkl.dump(current_output, open(output_path, "wb"))
+            pkl.dump(current_output, open(CURRENT_OUTPUT_PATH, "wb"))
 
 
 def predict(df, current_output, random_projection):
