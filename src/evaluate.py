@@ -2,23 +2,28 @@ import pandas as pd
 import numpy as np
 import typer
 from tqdm.auto import tqdm
-
+import json
 tqdm.pandas()
 import importlib
 
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-
+from src.utils import DATA_PATH
 
 def evaluate(
         inference_module, 
-        df_path = "../data/data.csv",
-        output_path = "../evaluate_results/output.csv"
+        df_path = str(DATA_PATH / "data.csv"),
+        output_path = str(DATA_PATH / "eval.csv"),
+        cluster_to_split = str(DATA_PATH / "cluster_to_split.json")
     ):
     mod = importlib.import_module(inference_module)
     predict_method = getattr(mod, "predict")
+    cluster_to_split = json.load(open(cluster_to_split))
+    cluster_to_split = {int(k): v for k, v in cluster_to_split.items()}
     df = pd.read_csv(df_path)
-    test_df = df.loc[df.split == "test"]
+    df["split"] = df.cluster.map(cluster_to_split)
+    df.dropna(inplace=True)
+    test_df = df.loc[df.split == "val"]
     rewrite_prompt_gt = test_df["rewrite_prompt"].values
     test_df.drop("rewrite_prompt", axis=1)
     pred_df = predict_method(test_df)
@@ -30,7 +35,7 @@ def evaluate(
     pred_df["score"] = pred_df.apply(scs, axis=1)
     # Actual score is an average over a 10 random sample of a single prompt per cluster
     scores = []
-    for i in range(10):
+    for _ in range(10):
         sampled_data = []
         for _, g in pred_df.groupby("cluster"):
             sampled_data.append(g.sample(n=1))
