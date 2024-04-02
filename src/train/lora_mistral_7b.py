@@ -8,13 +8,14 @@ from datasets import Dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import DataCollatorForCompletionOnlyLM, SFTTrainer
-from src.utils import json_parser_from_chat_response
+from src.utils import json_parser_from_chat_response, DATA_PATH
 
-DATASET = "../../data/data.csv" 
-PROJECT = "rewrite-prompt-finetuned-v2"
+DATASET =  str(DATA_PATH / "data.csv" )
+PROJECT = "mistral-7b-lora-finetune"
 BASE_MODEL_NAME = "mistral-7b-instruct-v0.2"
+RESUME_FROM_CHECKPOINT = "/home/llm-prompt-recovery/data/mistral-7b-instruct-v0.2-mistral-7b-lora-finetune/checkpoint-350"
 RUN_NAME = BASE_MODEL_NAME + "-" + PROJECT
-OUTPUT_DIR = "../../weights/" + RUN_NAME
+OUTPUT_DIR = str(DATA_PATH  / RUN_NAME)
 
 def create_dataset_item(df_row):
     json_input = {
@@ -37,7 +38,7 @@ def load_dataset(df, max_size = None):
 def formatting_func(example):
     output_texts = []
     for i in range(len(example['input'])):
-        text = f"""<s> [INST]
+        text = f"""[INST]
         I will give you a JSON with following structure:
         {{
             'original_text': 'An original piece of text.'
@@ -63,7 +64,7 @@ def formatting_func(example):
         Return a valid JSON as output and nothing more.
         
         -----------------------
-        Input: {example['input'][i]} [/INST] {example['output'][i]}</s>
+        Input: {example['input'][i]} [/INST] {example['output'][i]}
         """
         output_texts.append(text)
     return output_texts
@@ -92,10 +93,10 @@ base_model = "mistralai/Mistral-7B-Instruct-v0.2"
 
 tokenizer = AutoTokenizer.from_pretrained(base_model)
 tokenizer.pad_token_id =  tokenizer.unk_token_id
-tokenizer.padding_side = 'right'
+tokenizer.padding_side = 'left'
 
 
-compute_dtype = getattr(torch, "float16")
+compute_dtype = getattr(torch, "bfloat16")
 quant_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_bit_use_double_quant=False,
@@ -105,7 +106,8 @@ quant_config = BitsAndBytesConfig(
 model = AutoModelForCausalLM.from_pretrained(
     base_model, 
     device_map="auto", 
-    quantization_config=quant_config
+    quantization_config=quant_config,
+    
 )
 model.config.use_cache = False
 model.config.pretraining_tp = 1
@@ -127,8 +129,10 @@ model = get_peft_model(model, lora_config)
 print_trainable_parameters(model)
 
 data = pd.read_csv(DATASET)
+cluster_to_split = json.load(open("/home/llm-prompt-recovery/data/cluster_to_split.json"))
+data["split"] = data.cluster.apply(lambda x: cluster_to_split.get(str(x), "train"))
 train = data.loc[data.split == "train"]
-val = data.loc[data.split == "val"]
+val = data.loc[data.split == "val"].sample(200)
 
 train_dataset = load_dataset(train)
 val_dataset = load_dataset(val)
@@ -146,21 +150,20 @@ trainer = SFTTrainer(
     args=transformers.TrainingArguments(
         output_dir=OUTPUT_DIR,
         warmup_steps=0,
-        per_device_train_batch_size=8,
-        max_steps=30000,
-        learning_rate=2.5e-4, # Want a small lr for finetuning
+        num_train_epochs=3,
+        per_device_train_batch_size=4,
+        learning_rate=5e-5, # Want a small lr for finetuning
         optim="paged_adamw_8bit",
-        logging_steps=500,
+        lr_scheduler_type="cosine",
+        logging_steps=50,
         logging_dir="./logs",
         bf16=True,
         save_strategy="steps",
-        save_steps=500,
-        evaluation_strategy="steps",
-        eval_steps=500,
-        do_eval=True,
+        save_steps=50,
+        evaluation_strategy="no",
         save_total_limit=5,
     ),
     data_collator=data_collator,
 )
 
-trainer.train(resume_from_checkpoint=False)
+trainer.train(resume_from_checkpoint=RESUME_FROM_CHECKPOINT)

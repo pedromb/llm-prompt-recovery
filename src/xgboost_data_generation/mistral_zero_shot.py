@@ -15,7 +15,7 @@ RANDOM_PROJECTION_PATH = str(DATA_PATH / "random_projection_logits_mistral_zero_
 CURRENT_OUTPUT_PATH = str(DATA_PATH / "mistral_zero_shot_output.pkl")
 DATA_PATH = str(DATA_PATH / "data.csv")
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-BATCH_SIZE = 1
+BATCH_SIZE = 8
 
 def get_rewrite_prompt(original_text: str, transformed_text: str):
     json_input = json.dumps({
@@ -135,7 +135,8 @@ def batch_predict(
                 "rewrite_prompt": results[idx]["rewrite_prompt"]
             }
             current_output[entry_id] = new_entry
-            pkl.dump(current_output, open(CURRENT_OUTPUT_PATH, "wb"))
+            with open(CURRENT_OUTPUT_PATH, "wb") as f:
+                pkl.dump(current_output, f)
 
 
 def predict(df, current_output, random_projection):
@@ -159,4 +160,5 @@ df = pd.read_csv(DATA_PATH)
 current_output = pkl.load(open(CURRENT_OUTPUT_PATH, "rb"))  if Path(CURRENT_OUTPUT_PATH).exists() else {}
 random_projection = pkl.load(open(RANDOM_PROJECTION_PATH, "rb"))
 df = df.loc[~df.id.isin(current_output)]
+df = df.sample(frac=1)
 predict(df, current_output, random_projection)

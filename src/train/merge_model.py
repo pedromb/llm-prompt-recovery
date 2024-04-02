@@ -5,15 +5,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
-PEFT_MODEL = "../../weights/my-model"
-OUTPUT_PATH = "../../weights/my-merged-model"
+PEFT_MODEL = "/home/llm-prompt-recovery/data/mistral-7b-instruct-v0.2-mistral-7b-lora-keywords/checkpoint-8850"
+OUTPUT_PATH = "/home/llm-prompt-recovery/data/weights/mistral-7b-finetuned-keywords-lora"
 
 
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 if "mistral" in BASE_MODEL:
     tokenizer.pad_token = tokenizer.eos_token
 
-
+a
 compute_dtype = getattr(torch, "float16")
 quant_config = BitsAndBytesConfig(
     load_in_4bit=True,

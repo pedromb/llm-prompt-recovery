@@ -23,7 +23,7 @@ def evaluate(
     df = pd.read_csv(df_path)
     df["split"] = df.cluster.map(cluster_to_split)
     df.dropna(inplace=True)
-    test_df = df.loc[df.split == "val"]
+    test_df = df.loc[df.split != "train"]
     rewrite_prompt_gt = test_df["rewrite_prompt"].values
     test_df.drop("rewrite_prompt", axis=1)
     pred_df = predict_method(test_df)
@@ -34,15 +34,9 @@ def evaluate(
     pred_df["pred_embeddings"] = pred_df["rewrite_prompt"].progress_apply(lambda x: st_model.encode(x, normalize_embeddings=True, show_progress_bar=False).reshape(1, -1))
     pred_df["score"] = pred_df.apply(scs, axis=1)
     # Actual score is an average over a 10 random sample of a single prompt per cluster
-    scores = []
-    for _ in range(10):
-        sampled_data = []
-        for _, g in pred_df.groupby("cluster"):
-            sampled_data.append(g.sample(n=1))
-        sampled_data = pd.concat(sampled_data)
-        scores.append(sampled_data.score.mean())
-    print(f"Result: {np.mean(scores)}")
-    pred_df[["original_text", "rewritten_text", "rewrite_prompt_og", "rewrite_prompt", "score"]].to_csv(output_path, index=False)
+    print(pred_df.score.describe())
+    print(pred_df.groupby("cluster").score.mean().describe())
+    pred_df[["original_text", "rewritten_text", "rewrite_prompt_og", "rewrite_prompt", "score", "cluster"]].to_csv(output_path, index=False)
 
 
 if __name__ == "__main__":
