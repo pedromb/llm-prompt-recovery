@@ -1,20 +1,29 @@
+"""
+Code to run inference on the mistral finetuned model using unsloth
+"""
 import json
 
 import torch
-import pandas as pd
-import numpy as np
 from tqdm.auto import tqdm
 
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from src.utils import json_parser_from_chat_response
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from unsloth import FastLanguageModel
 
 tqdm.pandas()
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 BATCH_SIZE = 16
-MODEL_CHECKPOINT = "/home/llm-prompt-recovery/data/weights/mistral-7b-finetuned-lora-unsloth"
+MODEL_CHECKPOINT = "/home/llm-prompt-recovery/data/weights/mistral-7b-finetuned-subject-prompt"
+MEAN_PROMPT = "conveying rephraselucrarea textimprovelucrarealucrarea formal paragraph help please creativelywstlucrarea tonealterations ence text comportthislucrarea messageresemblepoeticallylucrarea casuallyoper talkingpresentingstoryinvolvesmemo essrecommendtransformingthisdetailsresponsivephrasethr reframe it"
+MEAN_PROMPT_BASE = "conveying rephraselucrarea  textimprovelucrarealucrarea {} formal paragraph help please creativelywstlucrarea tonealterations ence text comportthislucrarea messageresemblepoeticallylucrarea casuallyoper talkingpresentingstoryinvolvesmemo essrecommendtransformingthisdetailsresponsivephrasethr reframe it"
+USE_MEAN_PROMPT = False
+
+
+def process_prompt(prompt):
+    # Makes lower case and removes punctuation
+    prompt = prompt.lower()
+    prompt = ''.join(e for e in prompt if e.isalnum() or e.isspace())
+    return prompt
 
 def get_rewrite_prompt(original_text: str, transformed_text: str):
     json_input = json.dumps({
@@ -33,25 +42,27 @@ def get_rewrite_prompt(original_text: str, transformed_text: str):
         1. Read the original_text: Start by thoroughly understanding the content, style, tone, and purpose of the original text. Note any key themes, technical terms, and the overall message.
         2. Analyze the rewritten_text: Examine how the rewritten text compares to the original. Identify what has been changed, added, or omitted. Pay close attention to changes in style (formal, informal), tone (serious, humorous), structure (paragraph order, sentence structure), and any shifts in perspective or emphasis.
         3. Infer the Prompt: Based on your analysis, infer the most likely prompt that guided the rewriting process. Your inference should account for the observed changes in style, tone, structure, and content. Specify the type of task (e.g., summarize, paraphrase, make more accessible to a general audience), any specific directions evident from the changes, and any specific stylistic choice.
+        4. Derive the main subject of the prompt: Identify the main subject of the prompt as a set of keywords.
 
-        Based on your analysis return the prompt as if you were given the instruction your self like:
+        Based on your analysis return the prompt and the set of keywords that make the main subject of the prompt. 
+        Make the prompt as if you were given the instruction your self like:
+
         "Rewrite this text..."
         "Transform this ... into ... based on the style of ..."
         
         Make the prompt short and direct using a maximum of 20 words.
 
-
         Return your answer using the following JSON structure:
-        {{"prompt": "Your best guess for the prompt used"}}
-        
-
+        {{
+            "prompt": "Your best guess for the prompt used",
+            "keywords": "The set of keywords as a single string separated by empty space that identify the main subject of the guessed prompt"
+        }}
+    
             
         Return a valid JSON as output and nothing more.
         
         -----------------------
-        Input: 
-        
-        {json_input}
+        Input:  {json_input}
     """
 
 def get_chat_template(tokenizer, original_text: str, transformed_text: str):
@@ -88,6 +99,22 @@ def batch_get_rewrite_prompts(model, tokenizer, original_text, rewritten_text):
         rewrite_prompts.append(new_prompt)
     return rewrite_prompts
 
+def apply_mean_prompt(prompts):
+    final_prompts = []
+    mean_prompt_words = ["".join([e for e in i.lower() if e.isalnum() or e.isspace()]) for i in MEAN_PROMPT.split()]
+    for p in prompts:
+        if OPTIMISE_SINGLE:
+            new_prompt = optimise_single(p)
+        else:
+            words = ["".join([e for e in i.lower() if e.isalnum() or e.isspace()]) for i in p.split()]
+            words_left = [i for i in words if i not in mean_prompt_words]
+            new_prompt = " ".join(words_left)
+        if not new_prompt:
+            final_prompts.append(MEAN_PROMPT)
+        else:
+            final_prompts.append(MEAN_PROMPT_BASE.format(new_prompt))
+    return final_prompts
+        
 def batch_predict(df, mistral, mistral_tokenizer):
     final_prompts = [] 
     mistral_tokenizer.pad_token = mistral_tokenizer.eos_token
@@ -96,22 +123,17 @@ def batch_predict(df, mistral, mistral_tokenizer):
         rewritten_texts = df.rewritten_text.values[i:i+BATCH_SIZE]
         prompts = batch_get_rewrite_prompts(mistral, mistral_tokenizer, original_texts, rewritten_texts)
         final_prompts.extend(prompts)
+    final_prompts = final_prompts if not USE_MEAN_PROMPT else apply_mean_prompt(final_prompts)
     df["rewrite_prompt"] = final_prompts
     return df
 
 def predict(df):
-    compute_dtype = getattr(torch, "float16")
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_bit_use_double_quant=False,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=compute_dtype,
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name = MODEL_CHECKPOINT,
+        max_seq_length = 2048,
+        dtype = None,
+        load_in_4bit = True,
     )
-    mistral = AutoModelForCausalLM.from_pretrained(
-       MODEL_CHECKPOINT,  device_map="auto", quantization_config=quant_config
-    )
-    mistral.config.use_cache = False
-    mistral.config.pretraining_tp = 1
-    mistral_tokenizer = AutoTokenizer.from_pretrained(MODEL_CHECKPOINT)
-    mistral_tokenizer.padding_side = "left"
-    return batch_predict(df, mistral, mistral_tokenizer)
+    FastLanguageModel.for_inference(model)
+    tokenizer.padding_side = "left"
+    return batch_predict(df, model, tokenizer)
